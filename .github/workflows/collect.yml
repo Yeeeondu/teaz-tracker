@@ -1,0 +1,79 @@
+name: 수집 및 배포
+
+on:
+  schedule:
+    # 한국시간 = UTC+9. 00:05 KST 기본 수집, 03:05·06:05 KST는 지연·실패 대비 재시도
+    # (오늘 날짜 기록이 이미 있으면 자동으로 건너뜁니다)
+    - cron: "5 15 * * *"
+    - cron: "5 18 * * *"
+    - cron: "5 21 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "오늘 기록이 있어도 지금 값으로 새로 받기"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ["site/**", "!site/data/**"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: collect-and-deploy
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 공개 카운터 수집
+        id: collect
+        if: github.event_name != 'push'
+        continue-on-error: true
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then
+            python collector/collect.py --force
+          else
+            python collector/collect.py
+          fi
+
+      - name: 바뀐 데이터 저장
+        if: github.event_name != 'push'
+        run: |
+          git add site/data
+          if git diff --cached --quiet; then
+            echo "바뀐 데이터가 없습니다."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "data: $(TZ=Asia/Seoul date +'%Y-%m-%d') 수집"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: 수집 실패 알림
+        if: steps.collect.outcome == 'failure'
+        run: |
+          echo "::error::수집에 실패했습니다. 위 '공개 카운터 수집' 로그를 확인하세요."
+          exit 1
