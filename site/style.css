@@ -137,3 +137,9 @@ tr.total td { font-weight: 700; background: var(--bg); position: sticky; top: 37
   .plot { height: 300px; }
   input[type=search] { width: 150px; }
 }
+
+/* 캐릭터·원작 수 차트 */
+.legend .note { color: var(--muted); margin-left: auto; }
+.tip em { font-style: normal; color: var(--up); font-weight: 600; margin-left: 4px; }
+.tip em.neg { color: var(--down); }
+.tip .row.sub span:last-child { white-space: normal; text-align: right; max-width: 220px; }
