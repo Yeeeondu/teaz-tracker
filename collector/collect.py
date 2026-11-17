@@ -56,12 +56,9 @@ def save(data):
     os.replace(tmp, DATA)
 
 
-def kst_date(iso):
-    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(KST).strftime("%Y-%m-%d")
-
-
-def backfill(data):
-    """직접 수집 전까지만 원본 사이트의 실제 관측 기록으로 빈 날짜를 채움(추정값은 제외)."""
+def backfill(data, today):
+    """직접 수집 전까지만 원본 사이트의 실제 관측 기록으로 지난 날짜의 빈칸을 채움(추정값 제외).
+    오늘 날짜는 가져오지 않음 — 예약 실행이 늦어져도 오늘 값은 직접 수집하도록."""
     if any(d.get("origin") == "own" for d in data["days"]):
         return 0
     try:
@@ -74,7 +71,7 @@ def backfill(data):
     for s in src:
         if s.get("kind") == "estimate" or not s.get("capturedAt") or not s.get("characters"):
             continue
-        if s["date"] in have:
+        if s["date"] in have or s["date"] >= today:
             continue
         items = {c["id"]: [c["name"], c.get("work", ""), c["count"], None, c.get("url", "").rsplit("/", 1)[-1]]
                  for c in s["characters"]}
@@ -115,9 +112,9 @@ def fetch_items():
 def main():
     force = "--force" in sys.argv
     data = load()
-    backfill(data)
     now = datetime.now(timezone.utc)
     today = now.astimezone(KST).strftime("%Y-%m-%d")
+    backfill(data, today)
     existing = next((d for d in data["days"] if d["date"] == today), None)
     if existing and not force:
         save(data)
