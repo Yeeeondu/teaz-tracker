@@ -26,7 +26,9 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 const norm = s => (s || "").normalize("NFC").trim().replace(/\s+/g, " ");
 
 // ───────── 데이터 ─────────
-// 일 순증 = (이번 값 − 직전 수집 값) × 24 ÷ 두 수집 사이 시간. 수집 시각이 들쭉날쭉해도 하루치로 비교되게 함.
+// 집계 기준: 매일 사이트에 공개된 전체 캐릭터의 합계
+// 순증: 직전 수집과의 차이를 24시간 기준으로 환산(수집 시각이 밀려도 같은 잣대로 비교) — 탑툰챗과 같은 방식
+const MIN_GAP_H = 6; // 이보다 짧은 간격은 환산 오차가 커서 순증을 표시하지 않음
 function gain24(days, i, get) {
   const v = get(days[i]);
   if (v == null) return null;
@@ -34,11 +36,12 @@ function gain24(days, i, get) {
     const p = get(days[j]);
     if (p == null) continue;
     const hours = (days[i].t - days[j].t) / 3.6e6;
-    if (hours <= 0) return null;
-    return { v: (v - p) * 24 / hours, raw: v - p, hours, from: days[j].date };
+    if (!(hours >= MIN_GAP_H)) return { v: null, raw: v - p, hours, from: days[j].date };
+    return { v: Math.round((v - p) * 24 / hours), raw: v - p, hours, from: days[j].date };
   }
   return null;
 }
+const hrs = h => (h >= 47.5 ? `${(h / 24).toFixed(1)}일` : `${Math.round(h)}시간`);
 
 function prepare(raw) {
   const days = (raw.days || []).map(d => {
@@ -151,68 +154,51 @@ function attachHover(el, f, days, pad, html) {
 
 const srcLabel = d => (d.origin === "own" ? "직접 수집" : "원본 사이트 기록");
 const gainRow = g => g
-  ? `<div class="row"><span>일 순증(24h 환산)</span><span>${signed(g.v)}</span></div>` +
-    `<div class="row sub"><span>실제 증가 · ${g.from} 이후 ${g.hours.toFixed(1)}시간</span><span>${signed(g.raw)}</span></div>`
+  ? `<div class="row"><span>순증(24h 환산)</span><span>${g.v == null ? "—" : signed(g.v)}</span></div>` +
+    `<div class="row sub"><span>실제 증가 · ${hrs(g.hours)}</span><span>${signed(g.raw)}</span></div>`
   : "";
 
-// 선(누적) + 아래 막대(일 순증)
-function drawLineBar(el, all, key, gkey, colorVar, label, empty) {
-  const days = inRange(all).filter(d => d[key] != null);
-  if (!days.length) { el.innerHTML = `<div class="empty">${empty}</div>`; return; }
-  const pad = { l: 56, r: 76, t: 14, b: 22 }, barH = 74, gap = 22;
+// 메시지: 그날 순증 막대(24시간 기준 환산)만. 누적값은 패널 오른쪽 위 숫자로 표시
+function drawGain() {
+  const el = $("#plot-msg"), all = state.d.days, days = inRange(all);
+  if (!days.length) { el.innerHTML = `<div class="empty">아직 수집된 데이터가 없습니다</div>`; return; }
+  const pad = { l: 56, r: 64, t: 14, b: 22 };
   const f = frame(el, days, pad);
-  const lh = f.H - pad.t - pad.b - barH - gap;
-  const color = css(colorVar), surface = css("--surface");
-  const vals = days.map(d => d[key]);
-  const ticks = niceTicks(Math.min(...vals), Math.max(...vals));
-  const lo = ticks[0], hi = ticks.at(-1);
-  const y = v => pad.t + lh - ((v - lo) / (hi - lo || 1)) * lh;
-  let s = `<svg viewBox="0 0 ${f.W} ${f.H}" role="img" aria-label="${label} 누적과 일 순증">`;
-  s += yAxis(ticks, y, pad.l, f.W - pad.r);
-  // 원본 기록 구간은 점선, 직접 수집 구간은 실선. 하루 넘게 비면 선을 끊지 않고 이어 그림.
-  const seg = (list, dash) => {
-    if (list.length < 2) return "";
-    const p = list.map((d, j) => (j ? "L" : "M") + f.x(d.date).toFixed(1) + "," + y(d[key]).toFixed(1)).join("");
-    return `<path d="${p}" fill="none" stroke="${color}" stroke-width="2" ${dash ? 'stroke-dasharray="5 4"' : ""} stroke-linejoin="round" stroke-linecap="round"/>`;
-  };
-  const iOwn = days.findIndex(d => d.origin === "own");
-  if (iOwn < 0) s += seg(days, true);
-  else { s += seg(days.slice(0, iOwn + 1), true); s += seg(days.slice(iOwn), false); }
-  const last = days.at(-1);
-  s += `<circle cx="${f.x(last.date)}" cy="${y(last[key])}" r="4" fill="${color}" stroke="${surface}" stroke-width="2"/>`;
-  s += `<text class="endlabel" x="${f.x(last.date) + 8}" y="${y(last[key]) + 4}">${short(last[key])}</text>`;
-
-  // 막대
-  const bTop = pad.t + lh + gap;
-  const gv = days.map(d => d[gkey]?.v).filter(v => v != null);
-  const gLo = Math.min(0, ...gv), gHi = Math.max(1, ...gv);
-  const gt = niceTicks(gLo, gHi, 2), bLo = Math.min(0, gt[0]), bHi = gt.at(-1);
-  const by = v => bTop + barH - ((v - bLo) / (bHi - bLo || 1)) * barH;
-  s += `<line class="gridline" x1="${pad.l}" x2="${f.W - pad.r}" y1="${by(bHi)}" y2="${by(bHi)}"/>`;
-  s += `<g class="axis"><text x="${pad.l - 6}" y="${by(bHi) + 4}" text-anchor="end">${gv.length ? short(bHi) : ""}</text>` +
-    `<text x="${pad.l - 6}" y="${by(0) + 4}" text-anchor="end">0</text></g>`;
-  const bw = Math.max(2, Math.min(16, f.dayW * 0.62));
-  for (const d of days) {
-    const g = d[gkey]?.v;
-    if (g == null || Math.round(g) === 0) continue;
-    const y0 = by(0), y1 = by(g), h = Math.abs(y0 - y1), top = Math.min(y0, y1), x0 = f.x(d.date) - bw / 2;
-    const r = Math.min(3, h / 2, bw / 2);
-    s += g > 0
-      ? `<path class="gainbar" d="M${x0},${y0}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + bw - r}Q${x0 + bw},${top} ${x0 + bw},${top + r}V${y0}Z" fill="${color}"/>`
-      : `<rect class="gainbar" x="${x0}" y="${top}" width="${bw}" height="${h}" fill="${css("--down")}"/>`;
+  const ph = f.H - pad.t - pad.b;
+  const color = css("--s1");
+  const gv = days.map(d => d.gMsg?.v).filter(v => v != null);
+  let s = `<svg viewBox="0 0 ${f.W} ${f.H}" role="img" aria-label="메시지 일별 순증">`;
+  if (!gv.length) {
+    s += `<text class="gainlabel" x="${pad.l + f.iw / 2}" y="${pad.t + ph / 2}" text-anchor="middle">수집이 2일 이상 쌓이면 표시됩니다</text></svg>`;
+    el.innerHTML = s; return;
   }
-  s += `<line class="baseline" x1="${pad.l}" x2="${f.W - pad.r}" y1="${by(0)}" y2="${by(0)}"/>`;
-  s += `<text class="gainlabel" x="${f.W - pad.r + 8}" y="${by(bHi) + 10}">일 순증</text>`;
-  if (last[gkey]) s += `<text class="endlabel" x="${f.W - pad.r + 8}" y="${by(bHi) + 26}">${(last[gkey].v > 0 ? "+" : "") + short(last[gkey].v)}</text>`;
+  const ticks = niceTicks(Math.min(0, ...gv), Math.max(0, ...gv, 1));
+  const lo = ticks[0], hi = ticks.at(-1);
+  const y = v => pad.t + ph - ((v - lo) / (hi - lo || 1)) * ph;
+  s += yAxis(ticks, y, pad.l, f.W - pad.r);
+  const bw = Math.max(2, Math.min(18, f.dayW * 0.6));
+  for (const d of days) {
+    const g = d.gMsg?.v;
+    if (g == null || g === 0) continue;
+    const y0 = y(0), y1 = y(g), h = Math.abs(y0 - y1), top = Math.min(y0, y1), x0 = f.x(d.date) - bw / 2;
+    const r = Math.min(4, h / 2, bw / 2);
+    const op = d.origin === "own" ? 1 : 0.6; // 원본 사이트 기록 구간은 옅게
+    s += g > 0
+      ? `<path d="M${x0},${y0}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + bw - r}Q${x0 + bw},${top} ${x0 + bw},${top + r}V${y0}Z" fill="${color}" fill-opacity="${op}"/>`
+      : `<rect x="${x0}" y="${top}" width="${bw}" height="${h}" fill="${css("--down")}" fill-opacity="${op}"/>`;
+  }
+  s += `<line class="baseline" x1="${pad.l}" x2="${f.W - pad.r}" y1="${y(0)}" y2="${y(0)}"/>`;
+  const last = days.at(-1), lg = last.gMsg?.v;
+  if (lg != null) s += `<text class="endlabel" x="${f.x(last.date) + bw / 2 + 6}" y="${y(lg) + 4}">${(lg > 0 ? "+" : "") + short(lg)}</text>`;
   s += divider(f, days, pad.t, f.H - pad.b);
   s += dateAxis(f, days, f.H);
   s += `<line class="cross" x1="0" x2="0" y1="${pad.t}" y2="${f.H - pad.b}" visibility="hidden"/>`;
-  s += `<rect class="hit" x="${pad.l - 10}" y="${pad.t}" width="${f.iw + 20}" height="${f.H - pad.t - pad.b}"/></svg>`;
+  s += `<rect class="hit" x="${pad.l - 10}" y="${pad.t}" width="${f.iw + 20}" height="${ph}"/></svg>`;
   el.innerHTML = s;
   attachHover(el, f, days, pad, d =>
     `<b>${d.date} · ${srcLabel(d)}</b>` +
     `<div class="row sub"><span>수집 ${kst(d.captured_at, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><span>캐릭터 ${d.chars}개</span></div>` +
-    `<div class="row"><span>${label} 누적</span><span>${fmt(d[key])}</span></div>` + gainRow(d[gkey]));
+    `<div class="row"><span>메시지 누적</span><span>${fmt(d.msg)}</span></div>` + gainRow(d.gMsg));
 }
 
 // 캐릭터 수 · 원작 수 (계단선) — 그날 새로 생기거나 빠진 캐릭터·원작은 마우스를 올리면 표시
@@ -351,28 +337,26 @@ function drawWorks() {
   $("#works-legend").innerHTML = series.map(se => `<span><i style="background:${se.color}"></i>${esc(se.w)}</span>`).join("");
 }
 
-// ───────── 카드 ─────────
-function renderCards() {
-  const days = state.d.days, last = days.at(-1);
-  if (!last) { $("#cards").innerHTML = ""; return; }
-  const g = last.gMsg;
-  const prev = days.at(-2);
-  const delta = (k, unit) => {
-    if (!prev) return "직전 수집 없음";
-    const v = last[k] - prev[k];
-    return v ? `직전 수집 대비 ${v > 0 ? "+" : ""}${v}${unit}` : `직전 수집과 같음`;
+// ───────── 패널 오른쪽 위 숫자 ─────────
+function renderStats() {
+  const days = state.d.days, last = days.at(-1), prev = days.at(-2);
+  const stat = (k, v, d, cls = "", title = "") =>
+    `<div class="stat"><span class="k">${k}</span><span class="v">${v}</span><span class="d ${cls}" title="${esc(title)}">${d}</span></div>`;
+  if (!last) { $("#stat-msg").innerHTML = $("#stat-count").innerHTML = ""; return; }
+  const g = last.gMsg, v = g?.v;
+  // 직전 7회 평균 대비(마우스를 올리면 표시)
+  const recent = days.slice(-8, -1).map(d => d.gMsg?.v).filter(x => x != null);
+  const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : null;
+  const title = g ? `실제 ${signed(g.raw)} (${hrs(g.hours)} 동안)` + (avg != null && v != null ? ` · 직전 7회 평균 ${signed(avg)} 대비 ${v >= avg ? "+" : ""}${((v / avg - 1) * 100).toFixed(0)}%` : "") : "";
+  $("#stat-msg").innerHTML = stat("메시지 누적", fmt(last.msg), v != null ? signed(v) : "", v != null && v < 0 ? "down" : "", title);
+  const delta = k => {
+    if (!prev) return ["", ""];
+    const x = last[k] - prev[k];
+    return x ? [`${x > 0 ? "+" : ""}${x}`, x > 0 ? "" : "down"] : ["변동 없음", "flat"];
   };
   const workNames = state.d.works.filter(w => w !== "(원작 없음)" && last.works[w] != null);
-  // 최근 7일 평균 대비
-  const recent = days.slice(-8, -1).map(d => d.gMsg?.v).filter(v => v != null);
-  const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : null;
-  const vsAvg = g && avg ? ((g.v / avg - 1) * 100) : null;
-  const card = (k, v, d, cls = "") => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="d ${cls}">${d}</div></div>`;
-  $("#cards").innerHTML =
-    card("메시지 누적", fmt(last.msg), `${last.date} 수집`) +
-    card("일 순증 (24h 환산)", signed(g?.v), vsAvg == null ? "직전 수집 대비" : `직전 7회 평균 ${signed(avg)} 대비 ${vsAvg >= 0 ? "+" : ""}${vsAvg.toFixed(0)}%`, vsAvg == null ? "" : vsAvg >= 0 ? "up" : "down") +
-    card("캐릭터 수", fmt(last.chars), delta("chars", "명"), prev && last.chars !== prev.chars ? (last.chars > prev.chars ? "up" : "down") : "") +
-    card("원작 수", fmt(last.nWorks), `<span title="${esc(workNames.join(" · "))}">${delta("nWorks", "개")}</span>`, prev && last.nWorks !== prev.nWorks ? (last.nWorks > prev.nWorks ? "up" : "down") : "");
+  const [dc, cc] = delta("chars"), [dw, cw] = delta("nWorks");
+  $("#stat-count").innerHTML = stat("캐릭터", fmt(last.chars), dc, cc) + stat("원작", fmt(last.nWorks), dw, cw, workNames.join(" · "));
 }
 
 // ───────── 표 ─────────
@@ -387,7 +371,7 @@ function currentRows() {
     const totalGain = d.gMsg?.v;
     for (const [id, [name, work, m, , pub]] of Object.entries(d.items)) {
       const q = p?.items[id];
-      const gm = q && k ? (m - q[2]) * k : null;
+      const gm = q && k && hours >= MIN_GAP_H ? Math.round((m - q[2]) * k) : null;
       rows.push({
         name, work: norm(work), url: `https://myteaz.io/ko/chat/c/${encodeURIComponent(pub || id)}`,
         msg: m, gmsg: gm, share: gm != null && totalGain > 0 ? (gm / totalGain) * 100 : null, isNew: !q && !!p,
@@ -444,7 +428,7 @@ function renderTable() {
     || `<tr><td colspan="6" class="l zero">표시할 항목이 없습니다</td></tr>`);
   $("#table-sub").textContent = day
     ? `${kst(day.captured_at)} 수집 · ${srcLabel(day)}` +
-      (prev ? ` · 순증은 직전 수집(${prev.date}, ${((day.t - prev.t) / 3.6e6).toFixed(1)}시간 전) 대비를 24시간으로 환산` : "") +
+      (prev ? ` · 순증은 직전 수집(${prev.date}, ${hrs((day.t - prev.t) / 3.6e6)} 간격) 대비를 24시간 기준으로 환산` : "") +
       " · 제목을 누르면 정렬"
     : "";
 }
@@ -465,13 +449,12 @@ function renderUpdated() {
 }
 
 function renderCharts() {
-  const days = state.d.days;
-  drawLineBar($("#plot-msg"), days, "msg", "gMsg", "--s1", "메시지", "아직 수집된 데이터가 없습니다");
+  drawGain();
   drawCounts();
   drawWorks();
 }
 
-function render() { renderUpdated(); renderCards(); renderCharts(); renderDates(); renderTable(); }
+function render() { renderUpdated(); renderStats(); renderCharts(); renderDates(); renderTable(); }
 
 // ───────── 이벤트 ─────────
 function seg(id, fn) {
