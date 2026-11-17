@@ -17,24 +17,22 @@
     <p class="updated" id="updated">데이터를 불러오는 중…</p>
   </header>
 
-  <section class="cards" id="cards"></section>
-
   <div class="controls">
     <div class="seg" id="range" role="group" aria-label="기간">
       <button data-v="0" class="on">전체</button>
       <button data-v="90">90일</button>
       <button data-v="30">30일</button>
     </div>
-    <p class="hint">매일 공개된 전체 캐릭터 합계 · 막대 = 일 순증(직전 수집부터 늘어난 양을 24시간 기준으로 환산) · <span class="dash"></span>이전은 원본 사이트 기록</p>
+    <p class="hint">집계 기준: 매일 사이트에 공개된 전체 캐릭터의 합계 · 위 숫자는 누적, 막대는 그날 순증(24시간 기준 환산) · <span class="dash"></span>구분선 이전은 원본 사이트 기록</p>
   </div>
 
   <div class="grid">
     <article class="panel">
-      <div class="phead"><h2>메시지 누적</h2><p class="sub">캐릭터 카드의 종이비행기 숫자 합계</p></div>
+      <div class="phead"><div><h2>메시지 순증</h2><p class="sub">캐릭터 카드의 종이비행기 숫자 합계</p></div><div class="stats" id="stat-msg"></div></div>
       <div class="plot" id="plot-msg"></div>
     </article>
     <article class="panel">
-      <div class="phead"><h2>캐릭터 · 원작 수</h2><p class="sub">공개 캐릭터 수와 원작 수(원작명 중복 제외)</p></div>
+      <div class="phead"><div><h2>캐릭터 · 원작 수</h2><p class="sub">원작 수는 원작명 중복 제외</p></div><div class="stats" id="stat-count"></div></div>
       <div class="plot" id="plot-count"></div>
       <div class="legend" id="count-legend"></div>
     </article>
