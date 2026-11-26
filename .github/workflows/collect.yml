@@ -69,7 +69,17 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
+      # GitHub가 방금 올린 사이트 파일을 바로 못 찾는 일시 오류가 있어 잠시 기다렸다 배포하고, 실패하면 1분 뒤 한 번 더 시도
+      - name: 업로드 반영 대기
+        run: sleep 15
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - name: 배포 재시도 대기
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 60
+      - id: deploy2
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
 
       - name: 수집 실패 알림
